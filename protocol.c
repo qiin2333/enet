@@ -1622,7 +1622,7 @@ enet_protocol_send_outgoing_commands (ENetHost * host, ENetEvent * event, int ch
             (sendPass > 0 && ! (currentPeer -> flags & ENET_PEER_FLAG_CONTINUE_SENDING)))
           continue;
 
-        currentPeer -> flags &= ~ ENET_PEER_FLAG_CONTINUE_SENDING;
+        currentPeer -> flags &= ~ (ENET_PEER_FLAG_CONTINUE_SENDING | ENET_PEER_FLAG_SEND_ADMISSION_DEFERRED);
 
         host -> headerFlags = 0;
         host -> commandCount = 0;
@@ -1652,7 +1652,10 @@ enet_protocol_send_outgoing_commands (ENetHost * host, ENetEvent * event, int ch
              * Denial precedes all destructive ACK/command serialization. */
             if (host -> sendAdmission (host -> sendAdmissionContext, currentPeer,
                                       currentPeer -> mtu + sizeof (enet_uint32)) <= 0)
-              goto nextPeer;
+            {
+                currentPeer -> flags |= ENET_PEER_FLAG_SEND_ADMISSION_DEFERRED;
+                goto nextPeer;
+            }
             admissionActive = 1;
         }
 
@@ -1786,6 +1789,12 @@ enet_protocol_compute_wait_timeout(ENetHost * host, enet_uint32 timeout)
          currentPeer < & host -> peers [host -> peerCount];
          ++ currentPeer)
     {
+        /* A denied datagram has no send timestamp. Retry it after a bounded
+         * socket wait instead of spinning on an already-due ping. Explicit
+         * flushes and incoming events still retry admission immediately. */
+        const int admissionDeferred = currentPeer -> flags & ENET_PEER_FLAG_SEND_ADMISSION_DEFERRED;
+        if (admissionDeferred)
+            timeout = ENET_MIN (timeout, 2);
         if (! ENET_TIME_LESS (currentPeer -> nextTimeout, host -> serviceTime)) {
             timeout = ENET_MIN (timeout, ENET_TIME_DIFFERENCE (currentPeer -> nextTimeout, host -> serviceTime) + 1);
         }
@@ -1796,7 +1805,8 @@ enet_protocol_compute_wait_timeout(ENetHost * host, enet_uint32 timeout)
             enet_uint32 timeSinceLastComm = ENET_MIN(timeSinceLastSend, timeSinceLastRecv);
             if (timeSinceLastComm >= currentPeer -> pingInterval) {
                 // Ping is due now for this peer
-                return 0;
+                if (! admissionDeferred)
+                    return 0;
             } else {
                 timeout = ENET_MIN (timeout, currentPeer -> pingInterval - timeSinceLastComm);
             }

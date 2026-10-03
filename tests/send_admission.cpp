@@ -13,13 +13,17 @@ namespace {
     unsigned completed = 0;
     unsigned attempted = 0;
     unsigned zero = 0;
+    unsigned denied = 0;
+    unsigned allowAfterDenials = 0;
     std::size_t payload_bytes = 0;
     std::size_t maximum = 0;
 
     static int ENET_CALLBACK
     begin(void *raw, ENetPeer *, std::size_t maximum) {
       auto &state = *static_cast<admission_t *>(raw);
-      if (state.deny) return 0;
+      if (state.deny && (!state.allowAfterDenials || state.denied < state.allowAfterDenials)) {
+        ++state.denied; return 0;
+      }
       ++state.admitted;
       state.maximum = maximum;
       return 1;
@@ -181,5 +185,35 @@ namespace {
     ASSERT_EQ(client_received.size(), 1U);
     EXPECT_EQ(client_received.front(), "legacy payload");
     EXPECT_EQ(admission.admitted, 0U);
+  }
+
+  TEST_F(EnetAdmission, DeniedDuePingDoesNotSpinTheServiceLoop) {
+    ASSERT_TRUE(enet_list_empty(&server_peer->sentReliableCommands));
+    const auto now = enet_time_get();
+    server_peer->lastSendTime = now - server_peer->pingInterval - 1;
+    server_peer->lastReceiveTime = server_peer->lastSendTime;
+    const auto previousSend = server_peer->lastSendTime;
+    admission.deny = true;
+    EXPECT_EQ(enet_host_service(server, nullptr, 60), 0);
+    EXPECT_LE(admission.denied, 200U);
+    EXPECT_EQ(server_peer->lastSendTime, previousSend);
+    EXPECT_EQ(admission.admitted, 0U);
+    admission.deny = false;
+    enet_host_flush(server); // Explicit owner flush must retry immediately.
+    EXPECT_GT(admission.attempted, 0U);
+    EXPECT_EQ(admission.admitted, admission.completed);
+  }
+
+  TEST_F(EnetAdmission, DeniedQueuedCommandRetriesBeforeTheNextPing) {
+    admission.deny = true;
+    admission.allowAfterDenials = 4;
+    queue(server_peer, "deferred application payload");
+    EXPECT_EQ(enet_host_service(server, nullptr, 60), 0);
+    EXPECT_EQ(admission.denied, 4U);
+    EXPECT_GT(admission.attempted, 0U);
+    EXPECT_EQ(admission.admitted, admission.completed);
+    for (unsigned i = 0; i < 100 && client_received.empty(); ++i) pump();
+    ASSERT_EQ(client_received.size(), 1U);
+    EXPECT_EQ(client_received.front(), "deferred application payload");
   }
 }  // namespace

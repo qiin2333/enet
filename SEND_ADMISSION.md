@@ -11,6 +11,10 @@ for an optional checksum. A nonpositive result defers that peer without
 dequeueing ACKs or outgoing commands. Reliable timeout processing continues,
 so a denied retransmission remains queued until admission succeeds.
 
+A denied peer contributes a bounded 2 ms retry wait in `enet_host_service`,
+including when its ping is already due. This does not fabricate a send timestamp
+or delay an explicit owner flush or retry triggered by incoming socket activity.
+
 Every admitted datagram has exactly one completion. `attempted=1` reports the
 final serialized payload bytes and socket result, including socket failure.
 `attempted=0` reports an unused reservation, with zero bytes and result, when
