@@ -401,6 +401,13 @@ typedef struct _ENetHost
    size_t               duplicatePeers;              /**< optional number of allowed peers from duplicate IPs, defaults to ENET_PROTOCOL_MAXIMUM_PEER_ID */
    size_t               maximumPacketSize;           /**< the maximum allowable packet size that may be sent or received on a peer */
    size_t               maximumWaitingData;          /**< the maximum aggregate amount of buffer space a peer may use waiting for packets to be delivered */
+   /* Optional nonblocking outbound admission. Called before dequeueing ACKs or
+    * commands. 0 defers this peer without consuming commands; >0 admits one
+    * datagram. Every admitted call has exactly one completion, including no
+    * command (attempted=0). Callbacks must not reenter ENet or throw. */
+   void *               sendAdmissionContext;
+   int (ENET_CALLBACK * sendAdmission) (void *, ENetPeer *, size_t maximumPayload);
+   void (ENET_CALLBACK * sendCompletion) (void *, ENetPeer *, size_t payloadBytes, int sentLength, int attempted);
 } ENetHost;
 
 /**
@@ -586,4 +593,3 @@ extern size_t enet_protocol_command_size (enet_uint8);
 #endif
 
 #endif /* __ENET_ENET_H__ */
-

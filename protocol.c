@@ -1616,6 +1616,7 @@ enet_protocol_send_outgoing_commands (ENetHost * host, ENetEvent * event, int ch
          currentPeer < & host -> peers [host -> peerCount];
          ++ currentPeer)
     {
+        int admissionActive = 0;
         if (currentPeer -> state == ENET_PEER_STATE_DISCONNECTED ||
             currentPeer -> state == ENET_PEER_STATE_ZOMBIE ||
             (sendPass > 0 && ! (currentPeer -> flags & ENET_PEER_FLAG_CONTINUE_SENDING)))
@@ -1628,9 +1629,6 @@ enet_protocol_send_outgoing_commands (ENetHost * host, ENetEvent * event, int ch
         host -> bufferCount = 1;
         host -> packetSize = sizeof (ENetProtocolHeader);
 
-        if (! enet_list_empty (& currentPeer -> acknowledgements))
-          enet_protocol_send_acknowledgements (host, currentPeer);
-
         if (checkForTimeouts != 0 &&
             ! enet_list_empty (& currentPeer -> sentReliableCommands) &&
             ENET_TIME_GREATER_EQUAL (host -> serviceTime, currentPeer -> nextTimeout) &&
@@ -1641,6 +1639,25 @@ enet_protocol_send_outgoing_commands (ENetHost * host, ENetEvent * event, int ch
             else
               goto nextPeer;
         }
+
+        if (host -> sendAdmission != NULL && host -> sendCompletion != NULL)
+        {
+            if (enet_list_empty (& currentPeer -> acknowledgements) &&
+                enet_list_empty (& currentPeer -> outgoingCommands) &&
+                enet_list_empty (& currentPeer -> outgoingSendReliableCommands) &&
+                (! enet_list_empty (& currentPeer -> sentReliableCommands) ||
+                 ENET_TIME_DIFFERENCE (host -> serviceTime, currentPeer -> lastReceiveTime) < currentPeer -> pingInterval))
+              goto nextPeer;
+            /* Include the optional checksum outside the ordinary peer MTU.
+             * Denial precedes all destructive ACK/command serialization. */
+            if (host -> sendAdmission (host -> sendAdmissionContext, currentPeer,
+                                      currentPeer -> mtu + sizeof (enet_uint32)) <= 0)
+              goto nextPeer;
+            admissionActive = 1;
+        }
+
+        if (! enet_list_empty (& currentPeer -> acknowledgements))
+          enet_protocol_send_acknowledgements (host, currentPeer);
 
         if (((enet_list_empty (& currentPeer -> outgoingCommands) &&
               enet_list_empty (& currentPeer -> outgoingSendReliableCommands)) ||
@@ -1735,6 +1752,15 @@ enet_protocol_send_outgoing_commands (ENetHost * host, ENetEvent * event, int ch
                                        host -> wildcardBind ? (& currentPeer -> localAddress) : NULL,
                                        host -> buffers, host -> bufferCount);
 
+        if (admissionActive)
+        {
+            size_t payloadBytes = 0;
+            for (size_t buffer = 0; buffer < host -> bufferCount; ++ buffer)
+              payloadBytes += host -> buffers [buffer].dataLength;
+            host -> sendCompletion (host -> sendAdmissionContext, currentPeer, payloadBytes, sentLength, 1);
+            admissionActive = 0;
+        }
+
         enet_protocol_remove_sent_unreliable_commands (currentPeer, & sentUnreliableCommands);
 
         if (sentLength < 0)
@@ -1744,6 +1770,8 @@ enet_protocol_send_outgoing_commands (ENetHost * host, ENetEvent * event, int ch
         host -> totalSentPackets ++;
 
     nextPeer:
+        if (admissionActive)
+          host -> sendCompletion (host -> sendAdmissionContext, currentPeer, 0, 0, 0);
         if (currentPeer -> flags & ENET_PEER_FLAG_CONTINUE_SENDING)
           continueSending = sendPass + 1;
     }
@@ -1960,4 +1988,3 @@ enet_host_service (ENetHost * host, ENetEvent * event, enet_uint32 timeout)
 
     return 0; 
 }
-

@@ -1,0 +1,16 @@
+name: Send admission regression
+on:
+  pull_request:
+  push:
+    branches: [moonlight, 'codex/adaptive-send-admission']
+permissions:
+  contents: read
+jobs:
+  regression:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: sudo apt-get update && sudo apt-get install -y libgtest-dev ninja-build
+      - run: cmake -S . -B build -G Ninja -DENET_BUILD_TESTS=ON -DENET_NO_INSTALL=ON
+      - run: cmake --build build
+      - run: ctest --test-dir build --output-on-failure
