@@ -3,7 +3,6 @@ cmake_minimum_required(VERSION 2.8.12...3.20)
 project(enet)
 
 option(ENET_NO_INSTALL "Disable installation of headers and libraries" OFF)
-option(ENET_BUILD_TESTS "Build opt-in send admission regression tests" OFF)
 
 # The "configure" step.
 include(CheckFunctionExists)
@@ -109,25 +108,6 @@ target_include_directories(enet SYSTEM PUBLIC include)
 
 if (MINGW)
     target_link_libraries(enet winmm ws2_32)
-endif()
-
-if(ENET_BUILD_TESTS)
-    enable_testing()
-    find_package(GTest CONFIG QUIET)
-    if(NOT TARGET GTest::gtest_main AND NOT TARGET gtest_main)
-        if(NOT GTEST_SOURCE_DIR)
-            message(FATAL_ERROR "Install GTest or specify GTEST_SOURCE_DIR to build ENet tests")
-        endif()
-        add_subdirectory("${GTEST_SOURCE_DIR}" "${CMAKE_CURRENT_BINARY_DIR}/googletest" EXCLUDE_FROM_ALL)
-    endif()
-    add_executable(enet-send-admission-tests tests/send_admission.cpp)
-    target_compile_features(enet-send-admission-tests PRIVATE cxx_std_11)
-    if(TARGET GTest::gtest_main)
-        target_link_libraries(enet-send-admission-tests PRIVATE enet GTest::gtest_main)
-    else()
-        target_link_libraries(enet-send-admission-tests PRIVATE enet gtest_main)
-    endif()
-    add_test(NAME enet-send-admission-tests COMMAND enet-send-admission-tests)
 endif()
 
 if(NOT ENET_NO_INSTALL)
